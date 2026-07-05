@@ -2,7 +2,6 @@ import os
 import json
 import requests
 from telegram import Bot
-from datetime import datetime
 
 TOKEN = os.environ.get("TOKEN")
 CHANNEL_ID = -1004297055826
@@ -30,20 +29,32 @@ def save_data(data):
         json.dump(data, f)
 
 
-# ---------- قیمت دلار مبادله TGJU ----------
+# ---------- قیمت دلار مبادله (با بکاپ) ----------
 def get_dollar_price():
-    url = "https://api.tgju.org/v1/data/sana.json"
-
     headers = {
         "User-Agent": "Mozilla/5.0"
     }
 
-    r = requests.get(url, headers=headers, timeout=10)
-    data = r.json()
+    # 🔥 منبع 1: TGJU
+    try:
+        url = "https://api.tgju.org/v1/data/sana.json"
+        r = requests.get(url, headers=headers, timeout=10)
 
-    price = data["sana"]["usd"]["price"]
+        if r.status_code == 200:
+            data = r.json()
+            price = data["sana"]["usd"]["price"]
+            return int(price) // 10
+    except:
+        pass
 
-    return int(price) // 10
+    # 🔥 منبع 2: بکاپ
+    try:
+        url2 = "https://api.exchangerate.host/latest?base=USD&symbols=IRR"
+        r2 = requests.get(url2, timeout=10)
+        data2 = r2.json()
+        return int(data2["rates"]["IRR"]) // 10
+    except:
+        return None
 
 
 # ---------- main ----------
@@ -51,6 +62,9 @@ def main():
     data = load_data()
 
     price = get_dollar_price()
+
+    if price is None:
+        return
 
     # دیروز
     yesterday = data["today"]
@@ -77,8 +91,9 @@ def main():
     else:
         diff_day = "—"
 
+    # پیام نهایی
     text = f"""
-💵 گزارش دلار مبادله (TGJU)
+💵 گزارش دلار مبادله
 
 ━━━━━━━━━━━━━━
 📅 قیمت امروز: {price:,} تومان
