@@ -1,83 +1,112 @@
-import requests
-import json
 import os
+import json
+from telegram import Bot
 
-BOT_TOKEN = os.environ["BOT_TOKEN"]
-BRSAPI_KEY = os.environ["BRSAPI_KEY"]
-CHAT_ID = "-1004297055826"
-PRICE_FILE = "last_price.json"
+TOKEN = os.environ.get("TOKEN")
+CHANNEL_ID = -1004297055826
 
+bot = Bot(TOKEN)
 
-def find_usd_price(data):
-    """به‌صورت بازگشتی در ساختار JSON دنبال آیتم دلار آمریکا می‌گردد."""
-    if isinstance(data, dict):
-        symbol = str(data.get("symbol", "")).upper()
-        name = str(data.get("name", "")) + str(data.get("name_en", ""))
-        if symbol == "USD" or ("دلار" in name and "آمریک" in name):
-            price = data.get("price")
-            if price is not None:
-                return price
-        for value in data.values():
-            result = find_usd_price(value)
-            if result is not None:
-                return result
-    elif isinstance(data, list):
-        for item in data:
-            result = find_usd_price(item)
-            if result is not None:
-                return result
-    return None
+# 🔥 حالت تست
+TEST = True
 
+DATA_FILE = "data.json"
 
-def get_dollar_price():
-    """قیمت دلار بازار آزاد را از BrsApi می‌گیرد."""
-    url = f"https://Api.BrsApi.ir/Market/Gold_Currency.php?key={BRSAPI_KEY}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    resp = requests.get(url, headers=headers, timeout=15)
-    resp.raise_for_status()
-    data = resp.json()
+# ---------- load/save ----------
+def load_data():
+    try:
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {
+            "today": None,
+            "yesterday": None,
+            "week": [],
+            "last_week_avg": None
+        }
 
-    price = find_usd_price(data)
-    if price is None:
-        print("قیمت دلار در پاسخ پیدا نشد. خروجی کامل API:")
-        print(json.dumps(data, ensure_ascii=False, indent=2))
-        raise ValueError("قیمت دلار در پاسخ API پیدا نشد.")
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f)
 
-    return float(str(price).replace(",", ""))
+# ---------- قیمت (تست یا واقعی) ----------
+def get_price():
+    if TEST:
+        return 657000  # 👈 قیمت تستی
+    else:
+        import requests
+        url = "https://api.exchangerate.host/latest?base=USD&symbols=IRR"
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        return int(data["rates"]["IRR"] / 10)
 
-
-def load_last_price():
-    if os.path.exists(PRICE_FILE):
-        with open(PRICE_FILE, "r") as f:
-            return json.load(f).get("price")
-    return None
-
-
-def save_price(price):
-    with open(PRICE_FILE, "w") as f:
-        json.dump({"price": price}, f)
-
-
-def send_message(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": text}
-    r = requests.post(url, data=payload, timeout=15)
-    r.raise_for_status()
-
-
+# ---------- main ----------
 def main():
-    price = get_dollar_price()
-    last_price = load_last_price()
+    data = load_data()
 
-    if price == last_price:
-        print("قیمت تغییر نکرده، پیامی ارسال نشد.")
-        return
+    price = get_price()
 
-    text = f"قیمت دلار بازار آزاد: {price:,.0f} تومان"
-    send_message(text)
-    save_price(price)
-    print("پیام ارسال شد.")
+    # دیروز
+    yesterday = data["today"]
 
+    # امروز
+    data["yesterday"] = yesterday
+    data["today"] = price
+
+    # هفته
+    data["week"].append(price)
+    data["week"] = data["week"][-7:]
+
+    week_avg = sum(data["week"]) // len(data["week"])
+
+    # تغییر روزانه
+    if yesterday:
+        diff_day = price - yesterday
+        if diff_day > 0:
+            diff_day = f"🟢 +{diff_day:,}"
+        elif diff_day < 0:
+            diff_day = f"🔴 {diff_day:,}"
+        else:
+            diff_day = "⚪ بدون تغییر"
+    else:
+        diff_day = "—"
+
+    # تغییر هفته
+    last_week_avg = data.get("last_week_avg")
+
+    if last_week_avg:
+        diff_week = week_avg - last_week_avg
+        if diff_week > 0:
+            diff_week = f"🟢 +{diff_week:,}"
+        elif diff_week < 0:
+            diff_week = f"🔴 {diff_week:,}"
+        else:
+            diff_week = "⚪ بدون تغییر"
+    else:
+        diff_week = "—"
+
+    # ذخیره میانگین هفته
+    if len(data["week"]) == 7:
+        data["last_week_avg"] = week_avg
+        data["week"] = []
+
+    save_data(data)
+
+    text = f"""
+💵 گزارش تست دلار
+
+📅 امروز: {price:,}
+📊 دیروز: {yesterday if yesterday else '—'}
+📉 تغییر روزانه: {diff_day}
+
+━━━━━━━━━━
+📈 میانگین هفته: {week_avg:,}
+📊 تغییر هفته: {diff_week}
+
+#TEST_MODE
+"""
+
+    bot.send_message(chat_id=CHANNEL_ID, text=text)
 
 if __name__ == "__main__":
     main()
